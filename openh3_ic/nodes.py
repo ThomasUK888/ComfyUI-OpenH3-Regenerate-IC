@@ -2,7 +2,7 @@ import folder_paths
 import torch
 from comfy_api.latest import ComfyExtension, io
 
-from . import conditioning, ffn, lora
+from . import conditioning, draft as draft_prep, ffn, lora
 from . import schedule as sched
 
 
@@ -71,9 +71,11 @@ class OpenH3ICConditioning(io.ComfyNode):
                 io.LatentUpscaleModel.Input("upscale_model",
                                             tooltip="minimax_h3_latent_upscaler_3d_bf16 via Load Latent Upscale Model "
                                                     "(same weights as NVIDIA's latent_upscaler_3d_conv_v1)."),
-                io.Image.Input("draft", tooltip="The draft's frames, 24 fps, 113-124 of them (see allow_short). Any "
-                                                "size; it is fitted to the 1344x768 canvas the LoRA was trained on. "
-                                                "16:9 is what has been tested."),
+                io.Image.Input("draft", tooltip="The draft's frames, at any frame rate (see source_fps). Picked at "
+                                                "24 fps as NVIDIA does, then cover-resized and center-cropped to the "
+                                                "1344x768 canvas the LoRA was trained on. 113-124 frames at 24 fps."),
+                io.Float.Input("source_fps", default=24.0, min=1.0, max=240.0, step=0.001,
+                               tooltip="The draft's frame rate; connect the fps output of Get Video Components."),
                 io.Int.Input("width", default=2560, min=256, max=4096, step=32,
                              tooltip="Output width. 1920 (with height 1088) for 1080p, 2560 for 2K, 3840 for 4K."),
                 io.Int.Input("height", default=1440, min=256, max=4096, step=32,
@@ -89,6 +91,9 @@ class OpenH3ICConditioning(io.ComfyNode):
                 io.Boolean.Input("allow_short", default=False, optional=True,
                                  tooltip="Allow drafts under 113 frames (NVIDIA's minimum). They are padded to 124 "
                                          "with their last frame; Open-H3 IC Trim removes the padding."),
+                io.Audio.Input("audio", optional=True,
+                               tooltip="Optional: the draft's audio. Comes out trimmed or padded to the result's "
+                                       "length, ready for Create Video. The model itself never hears it."),
             ],
             outputs=[
                 io.Conditioning.Output(display_name="positive",
@@ -98,15 +103,18 @@ class OpenH3ICConditioning(io.ComfyNode):
                                          "audio silent. Feed it to SamplerCustomAdvanced's latent_image; the sampler "
                                          "adds the noise for the schedule's first sigma."),
                 io.Int.Output(display_name="frames",
-                              tooltip="The draft's real frame count. Connect to Open-H3 IC Trim to drop the padding."),
+                              tooltip="The draft's real frame count at 24 fps. Connect to Open-H3 IC Trim to drop "
+                                      "the padding."),
+                io.Audio.Output(display_name="audio",
+                                tooltip="The draft's audio fitted to the result (None when no audio was connected)."),
             ])
 
     @classmethod
-    def execute(cls, clip, vae, audio_vae, upscale_model, draft, width, height, caption,
-                draft_latent=None, allow_short=False) -> io.NodeOutput:
+    def execute(cls, clip, vae, audio_vae, upscale_model, draft, source_fps, width, height, caption,
+                draft_latent=None, allow_short=False, audio=None) -> io.NodeOutput:
         positive, latent, real = conditioning.build(clip, vae, audio_vae, upscale_model, draft, width, height,
-                                                    caption, draft_latent, allow_short)
-        return io.NodeOutput(positive, latent, real)
+                                                    caption, draft_latent, allow_short, source_fps)
+        return io.NodeOutput(positive, latent, real, draft_prep.fit_audio(audio, real))
 
 
 class OpenH3ICSigmas(io.ComfyNode):

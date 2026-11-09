@@ -25,8 +25,11 @@ def comfy_block(diffusers_block: str) -> str:
     return f"{'token_refiner.blocks' if kind.startswith('token_refiner') else 'blocks'}.{index}"
 
 
-def target_for(module: str, hidden: int, ffn: int):
+def target_for(module: str, qkv: int, ffn: int):
     """diffusers module (without `transformer.`) -> list of (lora_suffix, comfy target).
+
+    `qkv` is the width of ONE of q, k, v (heads * head_dim: 7168 on MiniMax-H3, wider than its
+    5376 hidden size), `ffn` the width of one SwiGLU half.
 
     A target is a diffusion_model weight key, or `(key, (dim, offset, size))` for a slice of it.
     `lora_suffix` is "" for the module's own LoRA, or one of the synthetic half names.
@@ -38,7 +41,7 @@ def target_for(module: str, hidden: int, ffn: int):
     key = lambda name: f"diffusion_model.{block}.{name}.weight"
     if rest in ("attn.to_q", "attn.to_k", "attn.to_v"):
         part = "qkv".index(rest[-1])
-        return [("", (key("attn.qkv_proj"), (0, part * hidden, hidden)))]
+        return [("", (key("attn.qkv_proj"), (0, part * qkv, qkv)))]
     if rest == "attn.to_out.0":
         return [("", key("attn.out_proj"))]
     if rest == "ff.net.0.proj":

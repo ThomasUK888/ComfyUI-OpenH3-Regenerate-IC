@@ -60,14 +60,17 @@ draft latent through the 3D latent upscaler to the target size, with the audio h
 | in | `vae` | VAE | MiniMax-H3 video VAE; encodes the draft, and decodes the result afterwards |
 | in | `audio_vae` | VAE | MiniMax-H3 audio VAE; only encodes the silent track |
 | in | `upscale_model` | LATENT_UPSCALE_MODEL | `minimax_h3_latent_upscaler_3d_bf16` from Load Latent Upscale Model |
-| in | `draft` | IMAGE | the draft's frames at 24 fps, 113-124 of them; fitted to the 1344x768 canvas the LoRA was trained on |
+| in | `draft` | IMAGE | the draft's frames at any frame rate. Picked at 24 fps with NVIDIA's rule, cover-resized and center-cropped to 1344x768 (768x1344 for a portrait target, untested); 113-124 frames at 24 fps |
+| in | `source_fps` | FLOAT | the draft's frame rate; connect `fps` from Get Video Components |
 | in | `width`, `height` | INT | output size: 1920x1088 (1080p), 2560x1440 (2K), 3840x2176 (4K; two upscale passes) |
 | in | `caption` | STRING | optional: the draft's original prompt, appended as the scene description |
 | in | `draft_latent` | LATENT, optional | the draft's own 1344x768 first-stage latent; replaces re-encoding the frames (sharper) |
 | in | `allow_short` | BOOLEAN, optional | pad drafts under 113 frames with their last frame |
+| in | `audio` | AUDIO, optional | the draft's audio; passed through fitted to the result. The model never hears it |
 | out | `positive` | CONDITIONING | to a Basic Guider (CFG 1, no negative) |
 | out | `LATENT` | LATENT | to SamplerCustomAdvanced `latent_image`; carries a noise mask that keeps the audio silent |
-| out | `frames` | INT | the draft's real length, for Open-H3 IC Trim |
+| out | `frames` | INT | the draft's real length at 24 fps, for Open-H3 IC Trim |
+| out | `audio` | AUDIO | the draft's audio trimmed or padded to the result, for Create Video |
 
 ### Open-H3 IC Sigmas
 
@@ -90,6 +93,10 @@ draft latent through the 3D latent upscaler to the target size, with the audio h
 **Apply HyperFlow (MiniMax-H3 8-Step)** comes from [ComfyUI-Hyperflow](https://github.com/Saganaki22/ComfyUI-Hyperflow)
 (Apache-2.0). The IC LoRA was trained on top of HyperFlow, whose two-time (t, r) step conditioning
 needs the non-pruned base. Use `lora_mode: bypass`; its SIGMAS output feeds Open-H3 IC Sigmas.
+
+**Do not load HyperFlow as a plain LoRA.** That applies its backbone weights without the two-time
+conditioning. Measured on the same draft, seed and `up3` schedule: same faces, but **~24% softer**
+(face Laplacian variance 244 against 323) and visibly mushier skin and stone.
 
 ## Install
 
@@ -121,7 +128,7 @@ They differ only in the conditioning node's width and height. The graph:
 
     Load Diffusion Model (ref2va, non-pruned) -> Apply HyperFlow (bypass) -> Load Open-H3 IC LoRA
       -> MiniMax-H3 Chunked FFN -> Model Sparse Attention (sol-attn, tau 1.0, dense blocks 0,1, sink exact_kv)
-    Load Video -> Get Video Components -> Open-H3 IC Conditioning -> SamplerCustomAdvanced (euler, CFG 1,
+    Load Video -> Get Video Components (frames, fps, audio) -> Open-H3 IC Conditioning -> SamplerCustomAdvanced (euler, CFG 1,
       sigmas from Open-H3 IC Sigmas fed by Apply HyperFlow's SIGMAS) -> VAE Decode -> Open-H3 IC Trim
 
 - `sink_conditioning: exact_kv` keeps attention to the draft exact and sparsifies only target-to-target;
@@ -133,9 +140,14 @@ They differ only in the conditioning node's width and height. The graph:
 
 ## Differences from NVIDIA's reference runtime
 
-int8 base instead of bf16; LMS Sharp off (its curve branches target pruned bases); silence encoded by
-ComfyUI's audio VAE rather than NVIDIA's stored latent; ComfyUI's own Ref2VA presentation of `<Video 1>`.
-Against a run reproducing NVIDIA's pieces more literally, output matched at ~34 dB with the same faces.
+- int8 base instead of bf16, and LMS Sharp off (its 50 curve branches target pruned bases).
+- The silent audio track is encoded with ComfyUI's audio VAE instead of NVIDIA's stored latent. Measured:
+  identical to 0.001 RMS over the first 205 of 207 audio frames; only the encoder's last two edge frames
+  differ, and those rows are pinned, never generated.
+- `<Video 1>` is presented to the text encoder by ComfyUI's own Ref2VA node.
+- Draft preparation follows NVIDIA's `read_draft` (24 fps index rule, cover crop, 113-frame minimum).
+- The IC LoRA's patches equal NVIDIA's `B @ A` deltas exactly (checked on CPU against the fused
+  q/k/v and SwiGLU weights).
 
 ## Licence
 

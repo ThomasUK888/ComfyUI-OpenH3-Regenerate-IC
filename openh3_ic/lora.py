@@ -10,19 +10,29 @@ log = logging.getLogger("openh3_ic")
 
 
 def _dims(model):
+    """(width of one of q/k/v, width of one SwiGLU half), read off the model's own fused layers.
+
+    NOT the hidden size: H3's attention is 56 heads x 128 = 7168 wide against a 5376 hidden size.
+    Sizing the q/k/v slices with the hidden size makes every one of them the wrong shape, which
+    ComfyUI logs and skips -- the render still succeeds, without the IC LoRA on q/k/v."""
     dm = model.get_model_object("diffusion_model")
-    hidden = int(dm.hidden_size)
-    ffn = int(dm.blocks[0].mlp.fc2.in_features)
-    return hidden, ffn
+    qkv_rows = int(dm.blocks[0].attn.qkv_proj.out_features)
+    if qkv_rows % 3:
+        raise RuntimeError(f"qkv_proj has {qkv_rows} rows, not a q/k/v triple")
+    return qkv_rows // 3, int(dm.blocks[0].mlp.fc2.in_features)
 
 
 def patches_for(model, state):
     """IC LoRA state dict (diffusers layout) -> ComfyUI patch dict for `model`."""
-    hidden, ffn = _dims(model)
+    qkv, ffn = _dims(model)
     lora, to_load = {}, {}
     for module in keys.modules(state.keys()):
         a, b = state[keys.PREFIX + module + keys.A], state[keys.PREFIX + module + keys.B]
-        for suffix, target in keys.target_for(module, hidden, ffn):
+        targets = keys.target_for(module, qkv, ffn)
+        rows = sum(t[1][1][2] if isinstance(t[1], tuple) else b.shape[0] for t in targets)
+        if rows != b.shape[0]:
+            raise RuntimeError(f"{module}: the LoRA writes {b.shape[0]} rows but the model slices give {rows}")
+        for suffix, target in targets:
             name = keys.PREFIX + module + suffix
             if suffix == keys.VALUE_HALF:
                 b_part = b[:ffn]

@@ -127,7 +127,15 @@
    "width": 1920,
    "height": 1088,
    "caption": "",
-   "allow_short": true
+   "allow_short": false,
+   "source_fps": [
+    "21",
+    2
+   ],
+   "audio": [
+    "21",
+    1
+   ]
   }
  },
  "23": {
@@ -224,8 +232,8 @@
     0
    ],
    "audio": [
-    "21",
-    1
+    "22",
+    3
    ],
    "fps": 24.0
   }

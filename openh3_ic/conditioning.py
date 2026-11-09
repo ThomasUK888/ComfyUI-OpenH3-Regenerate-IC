@@ -13,29 +13,17 @@ import torch
 import comfy.nested_tensor
 from comfy_extras import nodes_minimax_h3 as h3
 
+from . import draft as draft_prep
+
 TASK = ("Enhance <Video 1> into a high-quality version of the same video. "
         "Preserve the scene, objects, camera motion, timing, and composition of every frame. "
         "Restore fine details and remove degradation. Do not continue or change the scene.")
-FRAMES = 124            # the clip length the IC LoRA was trained on (5.2 s at 24 fps)
-MIN_FRAMES = 113        # NVIDIA refuses shorter drafts; the tail is padded with the last frame
+FRAMES = draft_prep.FRAMES
 UPSCALE_STAGE = 1440    # targets above 1440 rows are reached in two latent-upscale passes, as NVIDIA does
 
 
 def _result(output):
     return output.result if hasattr(output, "result") else output
-
-
-def pad_frames(frames, allow_short=False):
-    n = frames.shape[0]
-    if n > FRAMES:
-        raise ValueError(f"the draft has {n} frames; Open-H3-Regenerate-2K-IC takes at most {FRAMES} "
-                         "(5.2 s at 24 fps). Split longer clips into overlapping windows.")
-    if n < MIN_FRAMES and not allow_short:
-        raise ValueError(f"the draft has {n} frames; the model needs at least {MIN_FRAMES}. "
-                         "Enable allow_short to pad it with its last frame anyway.")
-    if n < FRAMES:
-        frames = torch.cat([frames, frames[-1:].expand(FRAMES - n, *frames.shape[1:])], 0)
-    return frames, n
 
 
 def _upscale(upscaler, latent, width, height):
@@ -56,8 +44,9 @@ def _silence(audio_vae, audio_t):
     return z[..., :audio_t].float()
 
 
-def build(clip, vae, audio_vae, upscaler, frames, width, height, caption="", draft_latent=None, allow_short=False):
-    frames, real = pad_frames(frames, allow_short)
+def build(clip, vae, audio_vae, upscaler, frames, width, height, caption="", draft_latent=None,
+          allow_short=False, source_fps=24.0):
+    frames, real = draft_prep.prepare(frames, source_fps, width, height, allow_short)
     prompt = TASK + "\n\nScene description: " + (caption or "")
     positive, empty = _result(h3.MiniMaxH3ReferenceToVideo.execute(
         clip=clip, prompt=prompt, width=width, height=height, length=FRAMES, vae=vae,
