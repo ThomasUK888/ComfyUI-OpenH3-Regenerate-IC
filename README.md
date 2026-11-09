@@ -23,16 +23,73 @@ no sharper than a 1080p run -- use 2K where faces are tiny.
 
 ## Nodes
 
-| node | |
-|---|---|
-| **Load Open-H3 IC LoRA** | applies the IC LoRA **as NVIDIA publishes it** (diffusers layout). q/k/v and the SwiGLU halves are mapped onto ComfyUI's fused weights as slice patches; no converted file |
-| **Open-H3 IC Conditioning** | draft frames (+ optional first-stage latent) -> positive conditioning, the starting latent (draft through the latent upscaler, audio held silent), and the real frame count |
-| **Open-H3 IC Sigmas** | `2-step` (default), `up3`, `up4`, `hf8` from HyperFlow's 8-step grid |
-| **MiniMax-H3 Chunked FFN** | runs the MLP over the sequence in chunks (exact). Needed for 2K on 32 GB; patches only this model |
-| **Open-H3 IC Trim** | drops the padded tail |
+All nodes are in the `openh3_ic` category. Hover any socket in ComfyUI for the same notes.
 
-`2-step` keeps `up3`'s starting noise (sigma 0.835) and drops the middle point. HyperFlow conditions each
-step on the interval it jumps, and in our tests it gave the same faces and equal sharpness ~1.5x faster.
+### Load Open-H3 IC LoRA
+
+Applies NVIDIA's IC LoRA **as published** (diffusers layout). q/k/v and the two SwiGLU halves are mapped
+onto ComfyUI's fused weights as slice patches, so there is no converted file.
+
+| | name | type | |
+|---|---|---|---|
+| in | `model` | MODEL | MiniMax-H3 Ref2VA, **non-pruned**, with Apply HyperFlow already applied |
+| in | `lora_name` | combo | `open_h3_regenerate_2k_ic_lora.safetensors` in `models/loras` |
+| in | `strength` | FLOAT | 1.0 = the released model; other values untested |
+| out | `MODEL` | MODEL | the patched model (312 LoRA modules -> 364 patches) |
+
+### MiniMax-H3 Chunked FFN
+
+Runs the MLP over the token sequence in chunks. Exact, because the MLP is applied to each token on its
+own; patches only this model. Needed for 2K on a 32 GB card (the draft in context makes ~150k tokens),
+harmless at 1080p.
+
+| | name | type | |
+|---|---|---|---|
+| in | `model` | MODEL | any MiniMax-H3 model |
+| in | `chunk_tokens` | INT | tokens per MLP pass (default 24576). Lower = less VRAM, marginally slower |
+| out | `MODEL` | MODEL | the same model with chunked MLPs |
+
+### Open-H3 IC Conditioning
+
+Puts the draft in context as `<Video 1>` with NVIDIA's task prompt, and builds the starting latent: the
+draft latent through the 3D latent upscaler to the target size, with the audio held as clean silence.
+
+| | name | type | |
+|---|---|---|---|
+| in | `clip` | CLIP | MiniMax-H3 text encoder (`qwen3vl_32b_minimax_h3_nvfp4_awq`, type `minimax`); reads the draft's frames |
+| in | `vae` | VAE | MiniMax-H3 video VAE; encodes the draft, and decodes the result afterwards |
+| in | `audio_vae` | VAE | MiniMax-H3 audio VAE; only encodes the silent track |
+| in | `upscale_model` | LATENT_UPSCALE_MODEL | `minimax_h3_latent_upscaler_3d_bf16` from Load Latent Upscale Model |
+| in | `draft` | IMAGE | the draft's frames at 24 fps, 113-124 of them; fitted to the 1344x768 canvas the LoRA was trained on |
+| in | `width`, `height` | INT | output size: 1920x1088 (1080p), 2560x1440 (2K), 3840x2176 (4K; two upscale passes) |
+| in | `caption` | STRING | optional: the draft's original prompt, appended as the scene description |
+| in | `draft_latent` | LATENT, optional | the draft's own 1344x768 first-stage latent; replaces re-encoding the frames (sharper) |
+| in | `allow_short` | BOOLEAN, optional | pad drafts under 113 frames with their last frame |
+| out | `positive` | CONDITIONING | to a Basic Guider (CFG 1, no negative) |
+| out | `LATENT` | LATENT | to SamplerCustomAdvanced `latent_image`; carries a noise mask that keeps the audio silent |
+| out | `frames` | INT | the draft's real length, for Open-H3 IC Trim |
+
+### Open-H3 IC Sigmas
+
+| | name | type | |
+|---|---|---|---|
+| in | `hyperflow_sigmas` | SIGMAS | the SIGMAS output of Apply HyperFlow (its 9-point grid) |
+| in | `schedule` | combo | `2-step` (default): 0.835 -> 0.469 -> 0, fastest, same faces and sharpness as `up3` in our tests. `up3`: NVIDIA's default. `up4`: from 0.923. `hf8`: all 8 steps from noise |
+| out | `SIGMAS` | SIGMAS | to SamplerCustomAdvanced, with the `euler` sampler |
+
+### Open-H3 IC Trim
+
+| | name | type | |
+|---|---|---|---|
+| in | `images` | IMAGE | the decoded result (124 frames) |
+| in | `frames` | INT | connect `frames` from Open-H3 IC Conditioning |
+| out | `IMAGE` | IMAGE | the result at the draft's own length |
+
+### Third-party node used
+
+**Apply HyperFlow (MiniMax-H3 8-Step)** comes from [ComfyUI-Hyperflow](https://github.com/Saganaki22/ComfyUI-Hyperflow)
+(Apache-2.0). The IC LoRA was trained on top of HyperFlow, whose two-time (t, r) step conditioning
+needs the non-pruned base. Use `lora_mode: bypass`; its SIGMAS output feeds Open-H3 IC Sigmas.
 
 ## Install
 
@@ -52,9 +109,15 @@ step on the interval it jumps, and in our tests it gave the same faces and equal
 checkpoints drop. On a pruned base HyperFlow runs backbone-only and the output is ~25% softer; its
 experimental curve refit only covers the full 8-step grid, so it cannot run `2-step`.
 
-## Workflow
+## Workflows
 
-`example_workflows/openh3_ic_1080p_api.json` (API format):
+| file | output | time on a 5090 (124 frames) |
+|---|---|---|
+| `example_workflows/openh3_ic_1080p_api.json` | 1920x1088 | ~120-150 s |
+| `example_workflows/openh3_ic_2k_api.json` | 2560x1440 | ~215 s |
+
+Both are API format (drag onto the canvas, or queue them over the API); the draft is `input/draft.mp4`.
+They differ only in the conditioning node's width and height. The graph:
 
     Load Diffusion Model (ref2va, non-pruned) -> Apply HyperFlow (bypass) -> Load Open-H3 IC LoRA
       -> MiniMax-H3 Chunked FFN -> Model Sparse Attention (sol-attn, tau 1.0, dense blocks 0,1, sink exact_kv)
