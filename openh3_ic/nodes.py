@@ -87,7 +87,13 @@ class OpenH3ICConditioning(io.ComfyNode):
                 io.Latent.Input("draft_latent", optional=True,
                                 tooltip="Optional. The draft's own first-stage latent (1344x768, before it was "
                                         "decoded), e.g. via Load Latent. Replaces re-encoding the frames: sharper "
-                                        "results in our tests. Must be this same clip; it is cut to 124 frames."),
+                                        "results in our tests. Must be this same clip; it is cut to 124 frames "
+                                        "from latent_offset."),
+                io.Int.Input("latent_offset", default=0, min=0, max=100000, step=17, optional=True,
+                             tooltip="Where this draft starts inside draft_latent, in pixel frames at 24 fps. "
+                                     "For one window of a longer clip. Must be a multiple of 17: the H3 VAE "
+                                     "encodes in 17-frame blocks, so only such a window is a slice of the "
+                                     "latent. 0 is the start."),
                 io.Boolean.Input("allow_short", default=False, optional=True,
                                  tooltip="Allow drafts under 113 frames (NVIDIA's minimum). They are padded to 124 "
                                          "with their last frame; Open-H3 IC Trim removes the padding."),
@@ -111,9 +117,10 @@ class OpenH3ICConditioning(io.ComfyNode):
 
     @classmethod
     def execute(cls, clip, vae, audio_vae, upscale_model, draft, source_fps, width, height, caption,
-                draft_latent=None, allow_short=False, audio=None) -> io.NodeOutput:
+                draft_latent=None, allow_short=False, audio=None, latent_offset=0) -> io.NodeOutput:
         positive, latent, real = conditioning.build(clip, vae, audio_vae, upscale_model, draft, width, height,
-                                                    caption, draft_latent, allow_short, source_fps)
+                                                    caption, draft_latent, allow_short, source_fps,
+                                                    latent_offset or 0)
         return io.NodeOutput(positive, latent, real, draft_prep.fit_audio(audio, real))
 
 

@@ -65,6 +65,7 @@ draft latent through the 3D latent upscaler to the target size, with the audio h
 | in | `width`, `height` | INT | output size: 1920x1088 (1080p), 2560x1440 (2K), 3840x2176 (4K; two upscale passes) |
 | in | `caption` | STRING | optional: the draft's original prompt, appended as the scene description |
 | in | `draft_latent` | LATENT, optional | the draft's own 1344x768 first-stage latent; replaces re-encoding the frames (sharper) |
+| in | `latent_offset` | INT, optional | where this window starts inside `draft_latent`, in pixel frames at 24 fps; a multiple of 17 (default 0) |
 | in | `allow_short` | BOOLEAN, optional | pad drafts under 113 frames with their last frame |
 | in | `audio` | AUDIO, optional | the draft's audio; passed through fitted to the result. The model never hears it |
 | out | `positive` | CONDITIONING | to a Basic Guider (CFG 1, no negative) |
@@ -137,6 +138,10 @@ They differ only in the conditioning node's width and height. The graph:
   MP4 moves the latent by ~30% RMS, and the kept latent gave a ~30% sharper result with the same faces.
 - **Longer clips:** the LoRA was trained on 124 frames. Split into overlapping 124-frame windows and
   crossfade the overlaps; in our test a 15 s, three-shot take spliced with no visible join.
+- **A window of a longer clip can still use the kept latent:** pass the whole clip's latent and the
+  window's first frame as `latent_offset`. The H3 VAE encodes in independent 17-frame blocks (5 latent
+  frames each), so a window starting on a multiple of 17 is an exact slice of the clip's latent; any
+  other start is refused. Start every window on that grid and every window drafts from the latent.
 
 ## Differences from NVIDIA's reference runtime
 
