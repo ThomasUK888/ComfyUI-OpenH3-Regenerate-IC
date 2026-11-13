@@ -1,7 +1,7 @@
 [project]
 name = "comfyui-openh3-regenerate-ic"
 description = "ComfyUI nodes for NVIDIA's Open-H3-Regenerate-2K-IC: regenerate a MiniMax-H3 draft at 1080p, 2K or 4K while keeping its faces."
-version = "0.1.0"
+version = "0.2.0"
 license = { file = "LICENSE" }
 requires-python = ">=3.10"
 dependencies = []

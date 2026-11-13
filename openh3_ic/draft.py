@@ -14,6 +14,12 @@ import torch.nn.functional as F
 
 FRAMES = 124
 MIN_FRAMES = 113
+# The MiniMax-H3 video VAE encodes in independent 17-frame clips, 5 latent frames each (causal,
+# 4x temporal: 1 + 4), and drops the last 3 latents of the whole clip: 17k+5 frames -> 5k+2.
+# Each clip starts its causal padding afresh, so latent block j depends on pixel frames
+# 17j..17j+16 alone, and a window that starts on a block is an exact slice of the whole latent.
+VAE_BLOCK_FRAMES = 17
+VAE_BLOCK_LATENTS = 5
 FPS = 24.0
 CANVAS = (1344, 768)
 
@@ -62,6 +68,32 @@ def prepare(frames, source_fps, target_width, target_height, allow_short=False):
     picked = frames.index_select(0, torch.tensor(indices, device=frames.device))
     width, height = canvas_for(target_width, target_height)
     return cover(picked, width, height), real
+
+
+def latent_frames(pixel_frames):
+    """Latent frames the H3 video VAE gives for `pixel_frames` (17k+5 -> 5k+2)."""
+    blocks = -(-max(int(pixel_frames), 1) // VAE_BLOCK_FRAMES)
+    return max(blocks * VAE_BLOCK_LATENTS - 3, 2)
+
+
+def latent_window(kept_frames, offset, length):
+    """(start, end) latent indices of the window that starts at pixel frame `offset`.
+
+    `length` is the draft's latent length (37 for the 124-frame canvas). The offset must sit on
+    a VAE block, or no slice of the kept latent is the window's latent. Raises when the kept
+    latent ends before the window does.
+    """
+    offset = int(offset)
+    if offset < 0 or offset % VAE_BLOCK_FRAMES:
+        raise ValueError(f"latent_offset {offset} must be a multiple of {VAE_BLOCK_FRAMES} pixel frames: "
+                         "the H3 VAE encodes in 17-frame blocks, so only a window starting on one is a "
+                         "slice of the kept latent")
+    start = offset // VAE_BLOCK_FRAMES * VAE_BLOCK_LATENTS
+    end = start + int(length)
+    if end > int(kept_frames):
+        raise ValueError(f"draft_latent has {kept_frames} latent frames; the window at pixel frame {offset} "
+                         f"needs {end} (it must cover pixel frames {offset}..{offset + FRAMES - 1})")
+    return start, end
 
 
 def fit_audio(audio, real_frames):
