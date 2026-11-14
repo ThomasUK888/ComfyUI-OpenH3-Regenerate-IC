@@ -45,7 +45,7 @@ def _silence(audio_vae, audio_t):
 
 
 def build(clip, vae, audio_vae, upscaler, frames, width, height, caption="", draft_latent=None,
-          allow_short=False, source_fps=24.0, latent_offset=0):
+          allow_short=False, source_fps=24.0, latent_offset=0, extend_short_latent=False):
     frames, real = draft_prep.prepare(frames, source_fps, width, height, allow_short)
     prompt = TASK + "\n\nScene description: " + (caption or "")
     positive, empty = _result(h3.MiniMaxH3ReferenceToVideo.execute(
@@ -56,8 +56,17 @@ def build(clip, vae, audio_vae, upscaler, frames, width, height, caption="", dra
     if draft_latent is not None:
         kept = draft_latent["samples"]
         kept = kept.unbind()[0] if getattr(kept, "is_nested", False) else kept
-        start, end = draft_prep.latent_window(kept.shape[2], latent_offset, draft.shape[2])
-        kept = kept[:, :, start:end].to(draft.dtype)
+        if extend_short_latent and not latent_offset and kept.shape[2] < draft.shape[2]:
+            # A take under 108 frames (#2098): its whole blocks from the kept latent, the rest from
+            # the draft's own encode, which is what an MP4 draft would have used for them.
+            whole = draft_prep.kept_blocks(kept.shape[2], draft.shape[2])
+            if kept.shape[:2] != draft.shape[:2] or kept.shape[3:] != draft.shape[3:]:
+                raise ValueError(f"draft_latent {tuple(kept.shape)} does not match the draft {tuple(draft.shape)}: "
+                                 "it must be the 1344x768 first stage of this same clip")
+            kept = torch.cat([kept[:, :, :whole].to(draft.dtype), draft[:, :, whole:]], 2)
+        else:
+            start, end = draft_prep.latent_window(kept.shape[2], latent_offset, draft.shape[2])
+            kept = kept[:, :, start:end].to(draft.dtype)
         if kept.shape != draft.shape:
             raise ValueError(f"draft_latent {tuple(kept.shape)} does not match the draft {tuple(draft.shape)}: "
                              "it must be the 1344x768 first stage of this same clip")

@@ -94,6 +94,10 @@ class OpenH3ICConditioning(io.ComfyNode):
                                      "For one window of a longer clip. Must be a multiple of 17: the H3 VAE "
                                      "encodes in 17-frame blocks, so only such a window is a slice of the "
                                      "latent. 0 is the start."),
+                io.Boolean.Input("extend_short_latent", default=False, optional=True,
+                                 tooltip="When draft_latent is shorter than the 124-frame canvas (a take under 108 "
+                                         "frames): use its whole 17-frame VAE blocks and the frames' own encode for "
+                                         "the rest, instead of refusing. Only with latent_offset 0."),
                 io.Boolean.Input("allow_short", default=False, optional=True,
                                  tooltip="Allow drafts under 113 frames (NVIDIA's minimum). They are padded to 124 "
                                          "with their last frame; Open-H3 IC Trim removes the padding."),
@@ -117,10 +121,11 @@ class OpenH3ICConditioning(io.ComfyNode):
 
     @classmethod
     def execute(cls, clip, vae, audio_vae, upscale_model, draft, source_fps, width, height, caption,
-                draft_latent=None, allow_short=False, audio=None, latent_offset=0) -> io.NodeOutput:
+                draft_latent=None, allow_short=False, audio=None, latent_offset=0,
+                extend_short_latent=False) -> io.NodeOutput:
         positive, latent, real = conditioning.build(clip, vae, audio_vae, upscale_model, draft, width, height,
                                                     caption, draft_latent, allow_short, source_fps,
-                                                    latent_offset or 0)
+                                                    latent_offset or 0, bool(extend_short_latent))
         return io.NodeOutput(positive, latent, real, draft_prep.fit_audio(audio, real))
 
 

@@ -38,3 +38,18 @@ def test_a_window_is_the_same_blocks_as_its_own_encode():
     for j in range(8):
         start, end = draft.latent_window(draft.latent_frames(17 * j + 124), 17 * j, draft.latent_frames(124))
         assert (start, end) == (5 * j, 5 * j + 37)
+
+
+def test_a_short_take_keeps_its_whole_blocks_only():
+    # 107-frame first stage (17*6+5) -> 32 latents: 6 whole blocks (30) and a partial pair.
+    assert draft.latent_frames(107) == 32
+    assert draft.kept_blocks(32, 37) == 30
+    # 56 frames (17*3+5) -> 17 latents -> 15.
+    assert draft.kept_blocks(draft.latent_frames(56), 37) == 15
+
+
+def test_no_whole_block_or_not_short_is_refused():
+    with pytest.raises(ValueError, match="under one"):
+        draft.kept_blocks(2, 37)
+    with pytest.raises(ValueError, match="not shorter"):
+        draft.kept_blocks(37, 37)
