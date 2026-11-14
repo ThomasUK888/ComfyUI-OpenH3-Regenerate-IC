@@ -66,6 +66,7 @@ draft latent through the 3D latent upscaler to the target size, with the audio h
 | in | `caption` | STRING | optional: the draft's original prompt, appended as the scene description |
 | in | `draft_latent` | LATENT, optional | the draft's own 1344x768 first-stage latent; replaces re-encoding the frames (sharper) |
 | in | `latent_offset` | INT, optional | where this window starts inside `draft_latent`, in pixel frames at 24 fps; a multiple of 17 (default 0) |
+| in | `extend_short_latent` | BOOLEAN, optional | with `latent_offset` 0, accept a `draft_latent` shorter than the canvas: its whole 17-frame VAE blocks, then the frames' own encode for the rest (default off: refuse) |
 | in | `allow_short` | BOOLEAN, optional | pad drafts under 113 frames with their last frame |
 | in | `audio` | AUDIO, optional | the draft's audio; passed through fitted to the result. The model never hears it |
 | out | `positive` | CONDITIONING | to a Basic Guider (CFG 1, no negative) |

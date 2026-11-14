@@ -96,6 +96,25 @@ def latent_window(kept_frames, offset, length):
     return start, end
 
 
+def kept_blocks(kept_frames, length):
+    """How many latent frames of a kept latent SHORTER than the draft stand in for the draft's own.
+
+    Only whole VAE blocks: a kept first stage of 17n+5 frames is 5n+2 latents, and its last 2 are
+    a partial block whose other 3 latents would come from a different encode. Blocks are encoded
+    independently, so the draft's own encode of blocks n.. (its real tail, then the last frame
+    repeated) follows on exactly. Raises when the kept latent holds no whole block, or is not
+    shorter than the draft (the ordinary cut covers that).
+    """
+    kept_frames, length = int(kept_frames), int(length)
+    if kept_frames >= length:
+        raise ValueError(f"draft_latent has {kept_frames} latent frames; it is not shorter than the draft's {length}")
+    whole = (kept_frames // VAE_BLOCK_LATENTS) * VAE_BLOCK_LATENTS
+    if whole < VAE_BLOCK_LATENTS:
+        raise ValueError(f"draft_latent has {kept_frames} latent frames, under one {VAE_BLOCK_FRAMES}-frame VAE "
+                         "block; draft from the frames instead")
+    return whole
+
+
 def fit_audio(audio, real_frames):
     """Trim or zero-pad the draft's audio to the result's length (real_frames at 24 fps). None stays None."""
     if audio is None:
